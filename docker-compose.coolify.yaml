@@ -1,0 +1,125 @@
+# Coolify deployment (Docker Compose build pack) for omh.munotte.com.
+# Derived from docker-compose.fullapp.yml: no host ports (Coolify's Traefik routes
+# to app:3000), no optional profiles, and every secret comes from Coolify env vars.
+services:
+  app:
+    build:
+      context: .
+      args:
+        - CONTAINER_PORT=3000
+        - INSTALL_CHROMIUM=${INSTALL_CHROMIUM:-0}
+    restart: unless-stopped
+    user: "0"
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        sh /app/docker/scripts/init-or-migrate.sh
+        yarn start
+    working_dir: /app
+    volumes:
+      - init_marker:/tmp/init-marker
+      - attachments_storage:/app/storage
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=3072}
+      DEPLOY_ENV: ${DEPLOY_ENV:-production}
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      APP_URL: ${APP_URL}
+      APP_ALLOWED_ORIGINS: ${APP_ALLOWED_ORIGINS:-}
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-open-mercato}
+      DB_POOL_MAX: ${DB_POOL_MAX:-20}
+      DB_POOL_MIN: ${DB_POOL_MIN:-2}
+      JWT_SECRET: ${JWT_SECRET}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-}
+      CONSENT_INTEGRITY_SECRET: ${CONSENT_INTEGRITY_SECRET:-}
+      TENANT_DATA_ENCRYPTION: ${TENANT_DATA_ENCRYPTION:-true}
+      TENANT_DATA_ENCRYPTION_FALLBACK_KEY: ${TENANT_DATA_ENCRYPTION_FALLBACK_KEY}
+      TENANT_DATA_ENCRYPTION_KEY: ${TENANT_DATA_ENCRYPTION_KEY:-}
+      QUEUE_STRATEGY: ${QUEUE_STRATEGY:-local}
+      NEXT_PUBLIC_QUEUE_STRATEGY: ${QUEUE_STRATEGY:-local}
+      CACHE_REDIS_URL: redis://redis:6379
+      CACHE_STRATEGY: redis
+      RATE_LIMIT_STRATEGY: ${RATE_LIMIT_STRATEGY:-memory}
+      ENABLE_CRUD_API_CACHE: ${ENABLE_CRUD_API_CACHE:-true}
+      MEILISEARCH_HOST: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILISEARCH_MASTER_KEY}
+      MEILISEARCH_MASTER_KEY: ${MEILISEARCH_MASTER_KEY}
+      OM_AI_PROVIDER: ${OM_AI_PROVIDER:-openai}
+      OM_AI_MODEL: ${OM_AI_MODEL:-gpt-5-mini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_GENERATIVE_AI_API_KEY: ${GOOGLE_GENERATIVE_AI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      NEXT_PUBLIC_UPGRADE_ACTIONS_ENABLED: ${NEXT_PUBLIC_UPGRADE_ACTIONS_ENABLED:-true}
+      UPGRADE_ACTIONS_ENABLED: ${UPGRADE_ACTIONS_ENABLED:-true}
+      SELF_SERVICE_ONBOARDING_ENABLED: ${SELF_SERVICE_ONBOARDING_ENABLED:-false}
+      DEMO_MODE: ${DEMO_MODE:-true}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      OM_INIT_SUPERADMIN_EMAIL: ${OM_INIT_SUPERADMIN_EMAIL}
+      OM_INIT_SUPERADMIN_PASSWORD: ${OM_INIT_SUPERADMIN_PASSWORD}
+      OM_INIT_ADMIN_PASSWORD: ${OM_INIT_ADMIN_PASSWORD:-}
+      OM_INIT_EMPLOYEE_PASSWORD: ${OM_INIT_EMPLOYEE_PASSWORD:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 40
+      start_period: 900s
+
+  postgres:
+    image: pgvector/pgvector:pg17-trixie
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-open-mercato}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Mirrors docker/redis/redis.conf: BullMQ needs noeviction; no persistence (cache only).
+    command: redis-server --maxmemory-policy noeviction --save "" --appendonly no --maxmemory ${REDIS_MAXMEMORY:-512mb}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.11
+    restart: unless-stopped
+    environment:
+      MEILI_ENV: production
+      MEILI_MASTER_KEY: ${MEILISEARCH_MASTER_KEY}
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - meilisearch_data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  meilisearch_data:
+  init_marker:
+  attachments_storage:
